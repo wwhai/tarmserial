@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package serial
@@ -5,6 +6,7 @@ package serial
 import (
 	"fmt"
 	"os"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -95,6 +97,12 @@ func openPort(name string, baud int, databits byte, parity Parity, stopbits Stop
 		cflagToUse |= unix.PARODD
 	case ParityEven:
 		cflagToUse |= unix.PARENB
+		// add the ParityMark support for linux
+		// https://github.com/tarm/serial/pull/104/files
+	case ParityMark:
+		cflagToUse |= syscall.PARENB
+		cflagToUse |= unix.CMSPAR
+		cflagToUse |= syscall.PARODD
 	default:
 		return nil, ErrBadParity
 	}
@@ -129,7 +137,7 @@ func openPort(name string, baud int, databits byte, parity Parity, stopbits Stop
 }
 
 type Port struct {
-	// We intentionly do not use an "embedded" struct so that we
+	// We intentionally do not use an "embedded" struct so that we
 	// don't export File
 	f *os.File
 }
@@ -145,11 +153,10 @@ func (p *Port) Write(b []byte) (n int, err error) {
 // Discards data written to the port but not transmitted,
 // or data received but not read
 func (p *Port) Flush() error {
-	const TCFLSH = 0x540B
 	_, _, errno := unix.Syscall(
 		unix.SYS_IOCTL,
 		uintptr(p.f.Fd()),
-		uintptr(TCFLSH),
+		uintptr(unix.TCFLSH),
 		uintptr(unix.TCIOFLUSH),
 	)
 
@@ -161,4 +168,26 @@ func (p *Port) Flush() error {
 
 func (p *Port) Close() (err error) {
 	return p.f.Close()
+}
+
+/*
+*
+* Some good pr from other developer from github
+*
+ */
+// Set file deadlines: https://github.com/tarm/serial/pull/126/files
+func (p *Port) SetWriteDeadline(t time.Time) error {
+	return p.f.SetWriteDeadline(t)
+}
+
+func (p *Port) SetDeadline(t time.Time) error {
+	return p.f.SetDeadline(t)
+}
+
+func (p *Port) SetReadDeadline(t time.Time) error {
+	return p.f.SetReadDeadline(t)
+}
+
+func (p *Port) SyscallConn() (syscall.RawConn, error) {
+	return p.f.SyscallConn()
 }
